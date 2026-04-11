@@ -25,8 +25,14 @@ const mqttClient = mqtt.connect(MQTT_URL, mqttOptions);
 // ===============================
 // 🌐 WebSocket Server
 // ===============================
-const wss = new WebSocket.Server({ port: 8080 });
+const PORT = process.env.PORT || 8080;
 
+const server = require('http').createServer();
+const wss = new WebSocket.Server({ server });
+
+server.listen(PORT, () => {
+  console.log("Server running on port:", PORT);
+});
 // ===============================
 // MQTT EVENTS
 // ===============================
