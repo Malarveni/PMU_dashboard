@@ -1,5 +1,5 @@
 // ===============================
-// PMU Advanced Backend Server (STABLE FINAL)
+// PMU Advanced Backend Server (FINAL CLEAN)
 // ===============================
 
 const mqtt = require('mqtt');
@@ -17,7 +17,8 @@ const MQTT_URL = 'mqtts://cbd69323b9dc4e9bae875510cd9ce6b7.s1.eu.hivemq.cloud:88
 
 const mqttOptions = {
     username: process.env.MQTT_USERNAME,
-    password: process.env.MQTT_PASSWORD
+    password: process.env.MQTT_PASSWORD,
+    reconnectPeriod: 2000
 };
 
 const MONGO_URL = process.env.MONGO_URL;
@@ -59,7 +60,7 @@ const PMUSchema = new mongoose.Schema({
 const PMU = mongoose.model('PMU', PMUSchema);
 
 // ===============================
-// CHECKSUM FUNCTION
+// CHECKSUM
 // ===============================
 function generateChecksum(str){
     let sum = 0;
@@ -70,7 +71,7 @@ function generateChecksum(str){
 }
 
 // ===============================
-// MQTT
+// MQTT SETUP
 // ===============================
 const mqttClient = mqtt.connect(MQTT_URL, mqttOptions);
 
@@ -78,30 +79,41 @@ let prevPhase = null;
 
 mqttClient.on('connect', () => {
     console.log("✅ MQTT Connected");
-    mqttClient.subscribe('pmu/data');
+
+    mqttClient.subscribe('pmu/data', (err) => {
+        if (err) {
+            console.error("❌ MQTT Subscribe Failed:", err);
+        } else {
+            console.log("📡 Subscribed to pmu/data");
+        }
+    });
+});
+
+mqttClient.on('error', (err) => {
+    console.error("❌ MQTT ERROR:", err);
 });
 
 // ===============================
-// DATA PROCESSING (ROBUST)
+// SINGLE MESSAGE HANDLER (IMPORTANT)
 // ===============================
 mqttClient.on('message', async (topic, message) => {
-    try {
-        console.log("📡 RAW:", message.toString());
 
+    console.log("📡 RECEIVED TOPIC:", topic);
+    console.log("📡 RAW DATA:", message.toString());
+
+    try {
         let msg = JSON.parse(message.toString());
         let d = msg.data;
 
         if (!d) {
-            console.log("❌ Invalid format");
+            console.log("❌ Invalid format (no data)");
             return;
         }
 
-        // 🔐 Checksum (NON-BLOCKING)
+        // Checksum (non-blocking)
         let calcChecksum = generateChecksum(JSON.stringify(d));
-        let checksumValid = (calcChecksum === msg.checksum);
-
-        if (!checksumValid) {
-            console.log("⚠️ Checksum mismatch (not blocking)");
+        if (calcChecksum !== msg.checksum) {
+            console.log("⚠️ Checksum mismatch");
         }
 
         // ===============================
@@ -122,7 +134,7 @@ mqttClient.on('message', async (topic, message) => {
         prevPhase = d.phase;
 
         // ===============================
-        // SAFE DATA FORMAT
+        // SAFE DATA
         // ===============================
         const safeData = {
             voltage: Number(d.voltage) || 0,
@@ -137,16 +149,17 @@ mqttClient.on('message', async (topic, message) => {
         };
 
         // ===============================
-        // SAVE TO DB (SAFE)
+        // SAVE TO DB
         // ===============================
         try {
             await PMU.create(safeData);
-        } catch (dbErr) {
-            console.log("⚠️ DB insert failed, skipping");
+            console.log("💾 Saved to MongoDB");
+        } catch (err) {
+            console.log("⚠️ DB insert failed");
         }
 
         // ===============================
-        // SEND TO FRONTEND
+        // SEND TO UI
         // ===============================
         wss.clients.forEach(client => {
             if (client.readyState === WebSocket.OPEN) {
@@ -155,7 +168,7 @@ mqttClient.on('message', async (topic, message) => {
         });
 
     } catch (err) {
-        console.error("❌ Processing Error:", err);
+        console.error("❌ JSON Parse Error:", err);
     }
 });
 
@@ -163,19 +176,19 @@ mqttClient.on('message', async (topic, message) => {
 // WEBSOCKET
 // ===============================
 wss.on('connection', () => {
-    console.log("🌐 Client connected");
+    console.log("🌐 WebSocket Client Connected");
 });
 
 // ===============================
-// API (NEVER FAIL)
+// API
 // ===============================
 app.get('/history', async (req, res) => {
     try {
         const data = await PMU.find().sort({ _id: -1 }).limit(100);
         res.json(Array.isArray(data) ? data.reverse() : []);
     } catch (err) {
-        console.error("❌ History API:", err);
-        res.json([]); // 🔥 ALWAYS return array
+        console.error("❌ History API Error:", err);
+        res.json([]);
     }
 });
 
@@ -184,13 +197,13 @@ app.get('/replay', async (req, res) => {
         const data = await PMU.find().sort({ _id: 1 }).limit(200);
         res.json(Array.isArray(data) ? data : []);
     } catch (err) {
-        console.error("❌ Replay API:", err);
-        res.json([]); // 🔥 ALWAYS return array
+        console.error("❌ Replay API Error:", err);
+        res.json([]);
     }
 });
 
 // ===============================
-// START
+// START SERVER
 // ===============================
 const PORT = process.env.PORT || 8080;
 
