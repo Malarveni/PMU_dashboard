@@ -20,7 +20,7 @@ const mqttOptions = {
 };
 
 // MongoDB (Use MongoDB Atlas)
-const MONGO_URL = "mongodb+srv://malarvenisaravanan_db_user:bbTRbssXaV7mH1w5@pmu.xxxxx.mongodb.net/pmu?retryWrites=true&w=majority";
+const MONGO_URL = "mongodb+srv://malarvenisaravanan_db_user:<db_password>@pmu.fkgoyet.mongodb.net/?appName=PMU";
 // ===============================
 // 🌐 INIT
 // ===============================
