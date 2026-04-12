@@ -1,120 +1,137 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Advanced PMU Dashboard</title>
+<title>PMU Advanced Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <style>
 body { background:#111; color:#fff; font-family:Arial; }
 .container { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
 .card { background:#222; padding:20px; border-radius:10px; }
-button { padding:10px; margin:5px; }
+.alert { color:red; font-weight:bold; }
 </style>
 </head>
 
 <body>
 
-<h1>⚡ PMU Dashboard (Live + History + Replay)</h1>
+<h1>⚡ PMU Dashboard (Industry Level)</h1>
 
 <div class="container">
+
   <div class="card">
-    <canvas id="chart"></canvas>
+    <canvas id="voltageChart"></canvas>
   </div>
 
   <div class="card">
-    <h3>Latest Values</h3>
-    <p id="data"></p>
+    <canvas id="waveChart"></canvas>
+  </div>
 
-    <button onclick="loadHistory()">Load History</button>
+  <div class="card">
+    <h3>Live Data</h3>
+    <p id="data"></p>
+    <p id="location"></p>
+    <p id="alert" class="alert"></p>
+
+    <button onclick="loadHistory()">History</button>
     <button onclick="replay()">Replay</button>
   </div>
+
 </div>
 
 <script>
 const ws = new WebSocket("wss://pmu-dashboard.onrender.com");
 
-let chartData = {
-    labels: [],
-    datasets: [{
-        label: "Voltage",
-        data: []
-    }]
-};
-
-const ctx = document.getElementById('chart').getContext('2d');
-
-const chart = new Chart(ctx, {
+// Voltage Chart
+const vChart = new Chart(document.getElementById('voltageChart'), {
     type: 'line',
-    data: chartData
+    data: { labels: [], datasets: [{ label: "Voltage", data: [] }] }
 });
 
+// Waveform Chart
+const wChart = new Chart(document.getElementById('waveChart'), {
+    type: 'line',
+    data: { labels: [], datasets: [{ label: "Waveform", data: [] }] }
+});
+
+let t = 0;
+
 // ===============================
-// 🔴 LIVE DATA
+// LIVE DATA
 // ===============================
-ws.onmessage = (event) => {
-    let d = JSON.parse(event.data);
+ws.onmessage = (e) => {
+    let d = JSON.parse(e.data);
 
     document.getElementById("data").innerText =
-        `V:${d.voltage} | I:${d.current} | Phase:${d.phase}`;
+        `V:${d.voltage} | Phase:${d.phase} | F:${d.frequency}`;
 
-    addData(d);
+    document.getElementById("location").innerText =
+        `Lat:${d.lat} Lon:${d.lon}`;
+
+    // Attack alert
+    if(d.attack){
+        document.getElementById("alert").innerText = "⚠️ CYBER ATTACK DETECTED!";
+    } else {
+        document.getElementById("alert").innerText = "";
+    }
+
+    addVoltage(d);
+    generateWave(d.voltage);
 };
 
 // ===============================
-// ➕ ADD DATA
+// GRAPH FUNCTIONS
 // ===============================
-function addData(d){
-    chart.data.labels.push(d.timestamp);
-    chart.data.datasets[0].data.push(d.voltage);
+function addVoltage(d){
+    vChart.data.labels.push(d.timestamp);
+    vChart.data.datasets[0].data.push(d.voltage);
 
-    if(chart.data.labels.length > 50){
-        chart.data.labels.shift();
-        chart.data.datasets[0].data.shift();
+    if(vChart.data.labels.length > 50){
+        vChart.data.labels.shift();
+        vChart.data.datasets[0].data.shift();
     }
+    vChart.update();
+}
 
-    chart.update();
+function generateWave(v){
+    let val = v * Math.sin(t);
+    t += 0.2;
 
-    detectAnomaly(d);
+    wChart.data.labels.push('');
+    wChart.data.datasets[0].data.push(val);
+
+    if(wChart.data.labels.length > 100){
+        wChart.data.labels.shift();
+        wChart.data.datasets[0].data.shift();
+    }
+    wChart.update();
 }
 
 // ===============================
-// 📊 LOAD HISTORY
+// HISTORY
 // ===============================
 async function loadHistory(){
     let res = await fetch('/history');
     let data = await res.json();
 
-    chart.data.labels = [];
-    chart.data.datasets[0].data = [];
+    vChart.data.labels = [];
+    vChart.data.datasets[0].data = [];
 
-    data.forEach(d => addData(d));
+    data.forEach(d => addVoltage(d));
 }
 
 // ===============================
-// 🔁 REPLAY
+// REPLAY
 // ===============================
 async function replay(){
     let res = await fetch('/replay');
     let data = await res.json();
 
-    chart.data.labels = [];
-    chart.data.datasets[0].data = [];
-
     let i = 0;
     let interval = setInterval(()=>{
-        addData(data[i]);
+        addVoltage(data[i]);
         i++;
         if(i >= data.length) clearInterval(interval);
     }, 500);
-}
-
-// ===============================
-// ⚠️ ANOMALY DETECTION
-// ===============================
-function detectAnomaly(d){
-    if(d.voltage > 260 || d.voltage < 180){
-        alert("⚠️ Voltage Anomaly Detected!");
-    }
 }
 </script>
 
