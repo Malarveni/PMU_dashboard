@@ -1,112 +1,106 @@
 // ===============================
-// PMU Backend Server (MQTT → WebSocket)
+// PMU Advanced Backend Server
 // ===============================
 
 const mqtt = require('mqtt');
 const WebSocket = require('ws');
+const http = require('http');
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
 
 // ===============================
-// 🔐 HiveMQ Configuration
+// 🔐 CONFIG
 // ===============================
 const MQTT_URL = 'mqtts://cbd69323b9dc4e9bae875510cd9ce6b7.s1.eu.hivemq.cloud:8883';
 
 const mqttOptions = {
     username: 'Pmu_user',
-    password: 'Pmu_secure123',
-    reconnectPeriod: 3000,   // auto reconnect
-    connectTimeout: 5000
+    password: 'Pmu_secure123'
 };
 
+// MongoDB (Use MongoDB Atlas)
+const MONGO_URL = "mongodb+srv://malarvenisaravanan_db_user:bbTRbssXaV7mH1w5@pmu.xxxxx.mongodb.net/pmu?retryWrites=true&w=majority";
 // ===============================
-// 🌐 Connect to HiveMQ
+// 🌐 INIT
+// ===============================
+const app = express();
+app.use(cors());
+
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
+
+// ===============================
+// 🧠 DATABASE MODEL
+// ===============================
+mongoose.connect(MONGO_URL);
+
+const PMUSchema = new mongoose.Schema({
+    voltage: Number,
+    current: Number,
+    phase: Number,
+    timestamp: String
+});
+
+const PMU = mongoose.model('PMU', PMUSchema);
+
+// ===============================
+// 📡 MQTT CONNECT
 // ===============================
 const mqttClient = mqtt.connect(MQTT_URL, mqttOptions);
 
-// ===============================
-// 🌐 WebSocket Server
-// ===============================
-const PORT = process.env.PORT || 8080;
-
-const server = require('http').createServer();
-const wss = new WebSocket.Server({ server });
-
-server.listen(PORT, () => {
-  console.log("Server running on port:", PORT);
-});
-// ===============================
-// MQTT EVENTS
-// ===============================
 mqttClient.on('connect', () => {
-    console.log("✅ Connected to HiveMQ");
-
-    mqttClient.subscribe('pmu/data', (err) => {
-        if (err) {
-            console.error("❌ Subscription error:", err);
-        } else {
-            console.log("📡 Subscribed to topic: pmu/data");
-        }
-    });
-});
-
-mqttClient.on('reconnect', () => {
-    console.log("🔄 Reconnecting to MQTT...");
-});
-
-mqttClient.on('error', (err) => {
-    console.error("❌ MQTT Error:", err);
-});
-
-mqttClient.on('offline', () => {
-    console.log("⚠️ MQTT Offline");
+    console.log("✅ MQTT Connected");
+    mqttClient.subscribe('pmu/data');
 });
 
 // ===============================
-// WEBSOCKET EVENTS
+// 🔥 REAL-TIME + STORAGE
 // ===============================
-wss.on('connection', (ws) => {
-    console.log("🌐 New WebSocket client connected");
-
-    ws.on('close', () => {
-        console.log("❌ WebSocket client disconnected");
-    });
-
-    ws.on('error', (err) => {
-        console.error("WebSocket error:", err);
-    });
-});
-
-// ===============================
-// DATA FORWARDING
-// ===============================
-mqttClient.on('message', (topic, message) => {
-
+mqttClient.on('message', async (topic, message) => {
     try {
-        let msgString = message.toString();
+        let data = JSON.parse(message.toString());
 
-        console.log("📥 MQTT Data:", msgString);
+        // Save to DB
+        await PMU.create({
+            voltage: data.voltage,
+            current: data.current,
+            phase: data.phase,
+            timestamp: data.timestamp
+        });
 
-        // Validate JSON
-        let parsed = JSON.parse(msgString);
-
-        // Optional checksum verification
-        if (!parsed.data || parsed.checksum === undefined) {
-            console.log("⚠️ Invalid data format");
-            return;
-        }
-
-        // Broadcast to all WebSocket clients
+        // Send LIVE
         wss.clients.forEach(client => {
             if (client.readyState === WebSocket.OPEN) {
-                client.send(msgString);
+                client.send(JSON.stringify(data));
             }
         });
 
     } catch (err) {
-        console.error("❌ JSON Parse Error:", err);
+        console.error("Error:", err);
     }
 });
 
 // ===============================
-// SERVER START
+// 📊 REST API (HISTORY)
 // ===============================
-console.log("🚀 WebSocket Server running at: ws://localhost:8080");
+
+// Get last 100 values
+app.get('/history', async (req, res) => {
+    const data = await PMU.find().sort({_id: -1}).limit(100);
+    res.json(data.reverse());
+});
+
+// Replay data
+app.get('/replay', async (req, res) => {
+    const data = await PMU.find().sort({_id: 1}).limit(200);
+    res.json(data);
+});
+
+// ===============================
+// 🚀 START SERVER
+// ===============================
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+    console.log("🚀 Server running on port", PORT);
+});
