@@ -1,5 +1,5 @@
 // ===============================
-// PMU Advanced Backend Server (FINAL)
+// PMU Advanced Backend Server (FINAL FIXED)
 // ===============================
 
 const mqtt = require('mqtt');
@@ -59,6 +59,17 @@ const PMUSchema = new mongoose.Schema({
 const PMU = mongoose.model('PMU', PMUSchema);
 
 // ===============================
+// CHECKSUM FUNCTION
+// ===============================
+function generateChecksum(str){
+    let sum = 0;
+    for(let i=0;i<str.length;i++){
+        sum += str.charCodeAt(i);
+    }
+    return sum % 256;
+}
+
+// ===============================
 // MQTT
 // ===============================
 const mqttClient = mqtt.connect(MQTT_URL, mqttOptions);
@@ -71,34 +82,68 @@ mqttClient.on('connect', () => {
 });
 
 // ===============================
-// DATA PROCESSING + CYBER DETECTION
+// DATA PROCESSING (FIXED)
 // ===============================
 mqttClient.on('message', async (topic, message) => {
     try {
-        let d = JSON.parse(message.toString());
+        // 🔥 STEP 1: Parse full message
+        let msg = JSON.parse(message.toString());
 
-        let attack = false;
+        // 🔥 STEP 2: Extract actual data
+        let d = msg.data;
 
-        // ⚠️ Cyber attack detection rules
+        if (!d) {
+            console.log("❌ Invalid format (no data field)");
+            return;
+        }
+
+        // 🔐 STEP 3: Checksum validation
+        let calcChecksum = generateChecksum(JSON.stringify(d));
+
+        if (calcChecksum !== msg.checksum) {
+            console.log("⚠️ Checksum mismatch - possible cyber attack");
+            return; // ignore fake data
+        }
+
+        let attack = d.attack || false;
+
+        // 🔥 Extra backend cyber detection
         if (prevPhase !== null && Math.abs(d.phase - prevPhase) > 40) {
             attack = true;
             console.log("⚠️ Phase jump attack detected");
         }
 
-        if (d.voltage > 300 || d.voltage < 100) {
+        if (d.voltage > 300 || d.voltage < 50) {
             attack = true;
-            console.log("⚠️ Voltage spoofing detected");
+            console.log("⚠️ Voltage anomaly detected");
         }
 
         prevPhase = d.phase;
 
-        // Save to DB
-        await PMU.create({ ...d, attack });
+        // ===============================
+        // SAVE TO DB
+        // ===============================
+        await PMU.create({
+            voltage: d.voltage,
+            current: d.current,
+            phase: d.phase,
+            frequency: d.frequency,
+            rocof: d.rocof,
+            lat: d.lat,
+            lon: d.lon,
+            timestamp: d.timestamp,
+            attack: attack
+        });
 
-        // Send to frontend
+        // ===============================
+        // SEND TO FRONTEND
+        // ===============================
         wss.clients.forEach(client => {
             if (client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify({ ...d, attack }));
+                client.send(JSON.stringify({
+                    ...d,
+                    attack: attack
+                }));
             }
         });
 
@@ -118,19 +163,28 @@ wss.on('connection', () => {
 // API
 // ===============================
 app.get('/history', async (req, res) => {
-    const data = await PMU.find().sort({ _id: -1 }).limit(100);
-    res.json(data.reverse());
+    try {
+        const data = await PMU.find().sort({ _id: -1 }).limit(100);
+        res.json(data.reverse());
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.get('/replay', async (req, res) => {
-    const data = await PMU.find().sort({ _id: 1 }).limit(200);
-    res.json(data);
+    try {
+        const data = await PMU.find().sort({ _id: 1 }).limit(200);
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // ===============================
 // START
 // ===============================
 const PORT = process.env.PORT || 8080;
+
 server.listen(PORT, () => {
-    console.log(`🚀 Running on ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
 });
