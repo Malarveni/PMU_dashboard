@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Advanced PMU Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body { background:#111; color:#fff; font-family:Arial; }
+.container { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+.card { background:#222; padding:20px; border-radius:10px; }
+button { padding:10px; margin:5px; }
+</style>
+</head>
+
+<body>
+
+<h1>⚡ PMU Dashboard (Live + History + Replay)</h1>
+
+<div class="container">
+  <div class="card">
+    <canvas id="chart"></canvas>
+  </div>
+
+  <div class="card">
+    <h3>Latest Values</h3>
+    <p id="data"></p>
+
+    <button onclick="loadHistory()">Load History</button>
+    <button onclick="replay()">Replay</button>
+  </div>
+</div>
+
+<script>
+const ws = new WebSocket("wss://pmu-dashboard.onrender.com");
+
+let chartData = {
+    labels: [],
+    datasets: [{
+        label: "Voltage",
+        data: []
+    }]
+};
+
+const ctx = document.getElementById('chart').getContext('2d');
+
+const chart = new Chart(ctx, {
+    type: 'line',
+    data: chartData
+});
+
+// ===============================
+// 🔴 LIVE DATA
+// ===============================
+ws.onmessage = (event) => {
+    let d = JSON.parse(event.data);
+
+    document.getElementById("data").innerText =
+        `V:${d.voltage} | I:${d.current} | Phase:${d.phase}`;
+
+    addData(d);
+};
+
+// ===============================
+// ➕ ADD DATA
+// ===============================
+function addData(d){
+    chart.data.labels.push(d.timestamp);
+    chart.data.datasets[0].data.push(d.voltage);
+
+    if(chart.data.labels.length > 50){
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+    }
+
+    chart.update();
+
+    detectAnomaly(d);
+}
+
+// ===============================
+// 📊 LOAD HISTORY
+// ===============================
+async function loadHistory(){
+    let res = await fetch('/history');
+    let data = await res.json();
+
+    chart.data.labels = [];
+    chart.data.datasets[0].data = [];
+
+    data.forEach(d => addData(d));
+}
+
+// ===============================
+// 🔁 REPLAY
+// ===============================
+async function replay(){
+    let res = await fetch('/replay');
+    let data = await res.json();
+
+    chart.data.labels = [];
+    chart.data.datasets[0].data = [];
+
+    let i = 0;
+    let interval = setInterval(()=>{
+        addData(data[i]);
+        i++;
+        if(i >= data.length) clearInterval(interval);
+    }, 500);
+}
+
+// ===============================
+// ⚠️ ANOMALY DETECTION
+// ===============================
+function detectAnomaly(d){
+    if(d.voltage > 260 || d.voltage < 180){
+        alert("⚠️ Voltage Anomaly Detected!");
+    }
+}
+</script>
+
+</body>
+</html>
