@@ -1,5 +1,5 @@
 // ===============================
-// PMU Advanced Backend Server (FINAL CLEAN)
+// PMU Backend Server (FIXED FINAL)
 // ===============================
 
 const mqtt = require('mqtt');
@@ -60,17 +60,6 @@ const PMUSchema = new mongoose.Schema({
 const PMU = mongoose.model('PMU', PMUSchema);
 
 // ===============================
-// CHECKSUM
-// ===============================
-function generateChecksum(str){
-    let sum = 0;
-    for(let i=0;i<str.length;i++){
-        sum += str.charCodeAt(i);
-    }
-    return sum % 256;
-}
-
-// ===============================
 // MQTT SETUP
 // ===============================
 const mqttClient = mqtt.connect(MQTT_URL, mqttOptions);
@@ -81,40 +70,23 @@ mqttClient.on('connect', () => {
     console.log("✅ MQTT Connected");
 
     mqttClient.subscribe('pmu/data', (err) => {
-        if (err) {
-            console.error("❌ MQTT Subscribe Failed:", err);
-        } else {
-            console.log("📡 Subscribed to pmu/data");
-        }
+        if (err) console.error("❌ Subscribe Failed:", err);
+        else console.log("📡 Subscribed to pmu/data");
     });
 });
 
-mqttClient.on('error', (err) => {
-    console.error("❌ MQTT ERROR:", err);
-});
-
 // ===============================
-// SINGLE MESSAGE HANDLER (IMPORTANT)
+// MESSAGE HANDLER (FIXED)
 // ===============================
 mqttClient.on('message', async (topic, message) => {
 
-    console.log("📡 RECEIVED TOPIC:", topic);
-    console.log("📡 RAW DATA:", message.toString());
+    console.log("📡 RECEIVED:", message.toString());
 
     try {
-        let msg = JSON.parse(message.toString());
-        let d = msg.data;
+        let parsed = JSON.parse(message.toString());
 
-        if (!d) {
-            console.log("❌ Invalid format (no data)");
-            return;
-        }
-
-        // Checksum (non-blocking)
-        let calcChecksum = generateChecksum(JSON.stringify(d));
-        if (calcChecksum !== msg.checksum) {
-            console.log("⚠️ Checksum mismatch");
-        }
+        // ✅ SUPPORT BOTH FORMATS
+        let d = parsed.data ? parsed.data : parsed;
 
         // ===============================
         // CYBER DETECTION
@@ -123,7 +95,7 @@ mqttClient.on('message', async (topic, message) => {
 
         if (prevPhase !== null && Math.abs(d.phase - prevPhase) > 40) {
             attack = true;
-            console.log("⚠️ Phase jump attack");
+            console.log("⚠️ Phase jump detected");
         }
 
         if (d.voltage > 300 || d.voltage < 50) {
@@ -149,13 +121,13 @@ mqttClient.on('message', async (topic, message) => {
         };
 
         // ===============================
-        // SAVE TO DB
+        // SAVE TO MONGODB
         // ===============================
         try {
             await PMU.create(safeData);
-            console.log("💾 Saved to MongoDB");
+            console.log("💾 Saved:", safeData);
         } catch (err) {
-            console.log("⚠️ DB insert failed");
+            console.error("❌ DB Error:", err);
         }
 
         // ===============================
@@ -168,7 +140,7 @@ mqttClient.on('message', async (topic, message) => {
         });
 
     } catch (err) {
-        console.error("❌ JSON Parse Error:", err);
+        console.error("❌ JSON ERROR:", err);
     }
 });
 
@@ -185,9 +157,8 @@ wss.on('connection', () => {
 app.get('/history', async (req, res) => {
     try {
         const data = await PMU.find().sort({ _id: -1 }).limit(100);
-        res.json(Array.isArray(data) ? data.reverse() : []);
+        res.json(data.reverse());
     } catch (err) {
-        console.error("❌ History API Error:", err);
         res.json([]);
     }
 });
@@ -195,9 +166,8 @@ app.get('/history', async (req, res) => {
 app.get('/replay', async (req, res) => {
     try {
         const data = await PMU.find().sort({ _id: 1 }).limit(200);
-        res.json(Array.isArray(data) ? data : []);
+        res.json(data);
     } catch (err) {
-        console.error("❌ Replay API Error:", err);
         res.json([]);
     }
 });
